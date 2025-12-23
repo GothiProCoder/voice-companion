@@ -1,0 +1,63 @@
+--index-url https://download.pytorch.org/whl/cu118
+
+# Core Backend Framework
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Database
+psycopg2-binary
+psycopg[binary,pool]>=3.1.0  # Required for AsyncPostgresSaver (LangGraph checkpointer)
+sqlalchemy
+pgvector
+
+# AI/ML Services
+openai-whisper
+faster-whisper
+librosa
+opensmile
+
+# google-generativeai
+transformers
+torch
+sentence-transformers
+parler-tts
+
+# Workflow Orchestration
+langgraph
+langchain
+langchain-google-genai
+
+# Audio Processing
+soundfile
+praat-parselmouth
+pydub
+scipy
+
+# Utilities
+python-dotenv
+pydantic
+numpy
+pydantic-settings
+
+# Frontend
+streamlit
+streamlit-webrtc
+
+# Optional but useful
+pytest
+
+# Core dependencies
+torch
+torchvision
+torchaudio
+
+# Parler TTS (from GitHub)
+git+https://github.com/huggingface/parler-tts.git
+
+# Additional dependencies
+transformers
+soundfile
+numpy
+
+langgraph-checkpoint-postgres
