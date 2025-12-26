@@ -350,10 +350,10 @@ class ParlerTTSService:
             logger.info("✅ TTS model already warmed up, skipping")
             return
         
-        if not self._needs_warmup:
-            logger.info("ℹ️ Warmup not needed (torch.compile disabled)")
-            self._warmed_up = True
-            return
+        # if not self._needs_warmup:
+        #     logger.info("ℹ️ Warmup not needed (torch.compile disabled)")
+        #     self._warmed_up = True
+        #     return
         
         logger.info("🔥 Warming up TTS model (this may take 30-60 seconds)...")
         import time
