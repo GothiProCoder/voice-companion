@@ -121,6 +121,9 @@ class AudioConfig(BaseSettings):
     """Audio processing configuration"""
     sample_rate: int = Field(default=16000, alias="AUDIO_SAMPLE_RATE")
     audio_format: str = Field(default="wav", alias="AUDIO_FORMAT")
+    # ⚡ NEW: Control Opus encoding for TTS output
+    # False = WAV mode (fast, ~15-20s) | True = Opus mode (slow, ~60-70s but smaller files)
+    enable_opus_encoding: bool = Field(default=False, alias="ENABLE_OPUS_ENCODING")
     
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -259,6 +262,7 @@ class Config:
         print(f"\n🎙️  Audio:")
         print(f"   Sample Rate: {self.audio.sample_rate} Hz")
         print(f"   Format: {self.audio.audio_format}")
+        print(f"   Opus Encoding: {'Enabled (smaller files)' if self.audio.enable_opus_encoding else 'Disabled (WAV mode, faster)'}")
         
         print(f"\n🧠 Memory:")
         print(f"   Context Window: {self.memory.max_memory_context} conversations")

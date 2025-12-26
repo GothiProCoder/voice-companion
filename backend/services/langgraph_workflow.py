@@ -657,11 +657,13 @@ async def phase_4_tts_generation(state: WorkflowState) -> Dict[str, Any]:
 
         return {
             **state,
-            # ⚠️ CRITICAL: sanitize_for_state converts TTSResponse to dict
-            # This is required because TTSResponse contains numpy.ndarray
-            # which cannot be serialized by LangGraph's MsgPack checkpointer
+            # ⚡ CRITICAL: Include audio bytes for Phase 5 file saving
+            # TTSResponse contains numpy arrays which can't be serialized by msgpack,
+            # so we extract only the serializable fields here
             "tts_response": {
-                "audio_base64_wav": tts_response.audio_base64_wav,  # ← Keep audio!
+                "audio_base64_wav": tts_response.audio_base64_wav,  # For frontend playback
+                "audio_opus_bytes": tts_response.audio_opus_bytes,  # ⚡ For Opus mode file saving
+                "audio_wav_bytes": tts_response.audio_wav_bytes,    # ⚡ For WAV mode file saving
                 "duration_seconds": tts_response.duration_seconds,
                 "sampling_rate": tts_response.sampling_rate,
                 "generation_time_ms": tts_response.generation_time_ms,
@@ -923,7 +925,9 @@ def _save_tts_audio_file(
     session_id: str,
 ) -> Optional[str]:
     """
-    Save TTS audio to Opus file and return relative path.
+    Save TTS audio to file and return relative path for database storage.
+    
+    ⚡ Supports both Opus (compressed) and WAV (fast) based on ENABLE_OPUS_ENCODING config.
     
     Args:
         tts_response: Sanitized TTSResponse dict from workflow state
@@ -931,48 +935,53 @@ def _save_tts_audio_file(
         session_id: Session UUID for unique filename
         
     Returns:
-        Relative path to saved file (e.g., "audio_storage/{user}/{session}.opus")
+        Relative path to saved file (e.g., "audio_storage/{user}/{uuid}.wav")
         None if no audio available
     """
     if not tts_response:
+        logger.warning("[AUDIO SAVE] No TTS response provided")
         return None
     
-    # Get Opus bytes from response
-    opus_bytes = tts_response.get("audio_opus_bytes")
+    # Import config to check which format to use
+    from backend.config import config
+    from backend.utils.audio import save_audio_file
     
-    if not opus_bytes:
-        # Fallback: Check for audio_array and encode on the fly
-        audio_array = tts_response.get("audio_array")
-        if audio_array is not None:
-            try:
-                from backend.utils.audio import encode_audio_to_opus
-                import numpy as np
-                # Convert list back to numpy if needed
-                if isinstance(audio_array, list):
-                    audio_array = np.array(audio_array, dtype=np.float32)
-                opus_bytes = encode_audio_to_opus(audio_array)
-            except Exception as e:
-                logger.warning(f"Failed to encode audio to Opus: {e}")
-                return None
-        else:
-            logger.debug("No audio data in TTS response")
-            return None
+    # Determine which bytes to use based on config
+    if config.audio.enable_opus_encoding:
+        audio_bytes = tts_response.get("audio_opus_bytes")
+        format_ext = "opus"
+        logger.debug("[AUDIO SAVE] Using Opus format (config enabled)")
+    else:
+        audio_bytes = tts_response.get("audio_wav_bytes")
+        format_ext = "wav"
+        logger.debug("[AUDIO SAVE] Using WAV format (Opus disabled)")
     
-    # Generate unique filename using session_id + timestamp
+    # Validate we have audio data
+    if not audio_bytes:
+        logger.warning(
+            f"[AUDIO SAVE] No audio bytes found for format '{format_ext}'. "
+            f"Available keys: {list(tts_response.keys())}"
+        )
+        return None
+    
+    # Generate unique filename using UUID
     import uuid
     conversation_id = str(uuid.uuid4())
     
     try:
         audio_path = save_audio_file(
-            audio_bytes=opus_bytes,
+            audio_bytes=audio_bytes,
             user_id=user_id,
             conversation_id=conversation_id,
-            format_ext="opus"
+            format_ext=format_ext  # "opus" or "wav"
         )
-        logger.info(f"✅ Saved TTS audio: {audio_path}")
+        logger.info(
+            f"✅ [AUDIO SAVE] Saved TTS audio: {audio_path} "
+            f"({len(audio_bytes) // 1024}KB, format={format_ext})"
+        )
         return audio_path
     except Exception as e:
-        logger.error(f"Failed to save TTS audio file: {e}", exc_info=True)
+        logger.error(f"[AUDIO SAVE] Failed to save TTS audio file: {e}", exc_info=True)
         return None
 
 

@@ -85,7 +85,8 @@ class TTSResponse:
     
     Fields:
         audio_array: Raw numpy audio (for streaming/preview)
-        audio_opus_bytes: Opus-encoded audio bytes (for file storage)
+        audio_opus_bytes: Opus-encoded audio bytes (when Opus enabled)
+        audio_wav_bytes: WAV-encoded audio bytes (when Opus disabled, for fast saving)
         audio_path: Relative path to saved audio file (None until saved)
         audio_base64_wav: DEPRECATED - kept for backwards compatibility
         sampling_rate: Audio sample rate
@@ -93,7 +94,8 @@ class TTSResponse:
         generation_time_ms: Generation time in milliseconds
     """
     audio_array: np.ndarray
-    audio_opus_bytes: bytes = b""        # Opus-encoded audio
+    audio_opus_bytes: bytes = b""        # Opus-encoded audio (when enabled)
+    audio_wav_bytes: bytes = b""         # ⚡ NEW: WAV-encoded audio (when Opus disabled)
     audio_path: Optional[str] = None     # Relative path to saved file
     audio_base64_wav: str = ""           # DEPRECATED - for backwards compat
     sampling_rate: int = 44100
@@ -296,20 +298,34 @@ class ParlerTTSService:
 
             duration_sec = len(audio) / self.config.sampling_rate
             
-            # ⚡ NEW: Encode to Opus format (~95% smaller than WAV)
-            from backend.utils.audio import encode_audio_to_opus
-            opus_bytes = encode_audio_to_opus(audio, self.config.sampling_rate)
+            # ⚡ CONDITIONAL ENCODING: Based on config flag
+            # Import config to check Opus encoding preference
+            from backend.config import config
             
-            # DEPRECATED: Keep base64 WAV for backwards compatibility
+            audio_opus_bytes = b""
+            audio_wav_bytes = b""
+            
+            if config.audio.enable_opus_encoding:
+                # Opus encoding (slower ~45-50s, smaller files ~100KB)
+                from backend.utils.audio import encode_audio_to_opus
+                audio_opus_bytes = encode_audio_to_opus(audio, self.config.sampling_rate)
+                logger.info(f"Opus encoding completed: {len(audio_opus_bytes) // 1024}KB")
+            else:
+                # ⚡ WAV encoding (instant, larger files ~2MB)
+                audio_wav_bytes = self._encode_to_wav_bytes(audio, self.config.sampling_rate)
+                logger.info(f"WAV mode (Opus skipped): {len(audio_wav_bytes) // 1024}KB")
+            
+            # DEPRECATED: Keep base64 WAV for backwards compatibility with frontend
             b64_wav = self._encode_wav_to_base64(audio, self.config.sampling_rate)
 
             gen_time_ms = int((time.time() - start_time) * 1000)
 
             response = TTSResponse(
                 audio_array=audio,
-                audio_opus_bytes=opus_bytes,      # NEW: Opus bytes for file storage
-                audio_path=None,                   # Set by workflow after saving
-                audio_base64_wav=b64_wav,          # DEPRECATED: Kept for compat
+                audio_opus_bytes=audio_opus_bytes,     # Empty if Opus disabled
+                audio_wav_bytes=audio_wav_bytes,       # Empty if Opus enabled
+                audio_path=None,                       # Set by workflow after saving
+                audio_base64_wav=b64_wav,              # DEPRECATED: Kept for compat
                 sampling_rate=self.config.sampling_rate,
                 duration_seconds=duration_sec,
                 generation_time_ms=gen_time_ms,
@@ -320,7 +336,7 @@ class ParlerTTSService:
 
             logger.info(
                 f"TTS generated: duration={duration_sec:.2f}s, time={gen_time_ms}ms, "
-                f"opus_size={len(opus_bytes) // 1024}KB"
+                f"format={'opus' if config.audio.enable_opus_encoding else 'wav'}"
             )
             return response
 
@@ -473,6 +489,26 @@ class ParlerTTSService:
         buf.seek(0)
         data = buf.read()
         return base64.b64encode(data).decode("utf-8")
+    
+    @staticmethod
+    def _encode_to_wav_bytes(audio: np.ndarray, sr: int) -> bytes:
+        """
+        ⚡ Encode numpy waveform as raw WAV bytes (fast, no ffmpeg subprocess).
+        
+        This avoids the slow Opus encoding via pydub/ffmpeg, which takes
+        45-50 seconds in Google Colab due to CPU-bound ffmpeg subprocess.
+        
+        Args:
+            audio: NumPy audio array (float32, range -1 to 1)
+            sr: Sample rate
+            
+        Returns:
+            WAV-encoded bytes
+        """
+        buf = io.BytesIO()
+        sf.write(buf, audio, sr, format="WAV")
+        buf.seek(0)
+        return buf.read()
 
 
 # ============================================================================
